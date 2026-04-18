@@ -58,7 +58,7 @@ def orchestrator(audio_pipe, vision_pipe, vibe_pipe, temp_pipe, model, fusion, d
             cnn_fused_score = float(cnn_prob_arr[0][0])
             
             # 4. Sensor Fusion & Decision
-            final_score, status = fusion.evaluate(cnn_fused_score)
+            final_score, status = fusion.evaluate(cnn_fused_score, current_temp, hardware_vib)
             
             # 5. Grad-CAM XAI (expensive - run every 5 cycles only)
             frame_counter += 1

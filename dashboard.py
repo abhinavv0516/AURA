@@ -117,7 +117,7 @@ class Dashboard:
         self.info_card.pack(fill=tk.BOTH, expand=True)
         
         self._add_spec_row(self.info_card, "SENSOR", "DHT11")
-        self._add_spec_row(self.info_card, "VIBRATION", "MPU6050")
+        self._add_spec_row(self.info_card, "VIBRATION", "ADXL345")
         self._add_spec_row(self.info_card, "SAMPLING", "50 HZ")
         self._add_spec_row(self.info_card, "PROTOCOL", "UDP STREAM")
 
@@ -140,12 +140,13 @@ class Dashboard:
         bot_row.pack(fill=tk.BOTH, expand=True)
         bot_row.grid_columnconfigure((0, 1), weight=1)
 
-        # Vibration Card
+        # Vibration Card (Time Series)
         self.vib_card = self._create_card(bot_row, "VIBRATION LEVEL")
         self.vib_card.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
         
         self.fig_v, self.ax_v = plt.subplots(figsize=(4, 3), facecolor=CARD)
         self._style_matplotlib_ax(self.ax_v)
+        self.ax_v.set_ylim(230, 350) # Fixed Y-axis to accommodate +100 spikes
         self.canvas_v = FigureCanvasTkAgg(self.fig_v, master=self.vib_card)
         self.canvas_v.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -281,19 +282,38 @@ class Dashboard:
         if len(self._temp_history) > 60: self._temp_history.pop(0)
         self.ax_t.clear()
         self._style_matplotlib_ax(self.ax_t)
-        self.ax_t.plot(self._temp_history, color=ACCENT, linewidth=2)
-        self.ax_t.fill_between(range(len(self._temp_history)), self._temp_history, color=ACCENT, alpha=0.1)
+        
+        # Color logic based on thresholds
+        tc = RED if current_temp >= 35 else YELLOW if current_temp >= 32 else ACCENT
+        
+        self.ax_t.plot(self._temp_history, color=tc, linewidth=2)
+        self.ax_t.fill_between(range(len(self._temp_history)), self._temp_history, color=tc, alpha=0.1)
+        
+        # Visual threshold lines
+        self.ax_t.axhline(32, color=YELLOW, ls='--', lw=1.0, alpha=0.6)
+        self.ax_t.axhline(35, color=RED,    ls='--', lw=1.0, alpha=0.6)
         self.canvas_t.draw_idle()
 
-        # Vibration History
+        # Vibration Level (Time Series with Constant Y-Axis)
         if hardware_vib > 0 or len(self._vibe_history) > 0:
             self._vibe_history.append(hardware_vib)
             if len(self._vibe_history) > 60: self._vibe_history.pop(0)
+            
             self.ax_v.clear()
             self._style_matplotlib_ax(self.ax_v)
-            vc = RED if hardware_vib > 240 else GREEN
-            self.ax_v.plot(self._vibe_history, color=vc, linewidth=2)
+            
+            # Vibration logic: >337 is critical (+100), >287 is warning (+50)
+            vc = RED if hardware_vib >= 337.0 else YELLOW if hardware_vib >= 287.0 else ACCENT
+            
+            self.ax_v.plot(self._vibe_history, color=vc, linewidth=2.0)
             self.ax_v.fill_between(range(len(self._vibe_history)), self._vibe_history, color=vc, alpha=0.1)
+            
+            # Constant Y-axis and dynamic X-axis (scrolling)
+            self.ax_v.set_ylim(230, 350)
+            self.ax_v.axhline(237, color=SUBTEXT, ls='--', lw=0.8, alpha=0.3) # Baseline
+            self.ax_v.axhline(287, color=YELLOW,  ls='--', lw=1.0, alpha=0.5) # Warning Threshold
+            self.ax_v.axhline(337, color=RED,     ls='--', lw=1.0, alpha=0.5) # Critical Threshold
+            
             self.canvas_v.draw_idle()
 
         # Acoustic Waveform

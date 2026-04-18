@@ -17,6 +17,8 @@ class FusionEngine:
         self.cmd_port = cmd_port
         self.log_file = 'aura_log.csv'
         self.critical_triggered = False
+        self.last_alert_time = 0
+        self.alert_cooldown = 300 # Send WhatsApp alert at most once every 5 minutes
         
         # Initialize CSV logging file with headers
         with open(self.log_file, 'w', newline='') as f:
@@ -37,19 +39,34 @@ class FusionEngine:
             except Exception as e:
                 print(f"Twilio setup error: {e}")
 
-    def evaluate(self, cnn_fused_score):
+    def evaluate(self, cnn_fused_score, current_temp=0.0, hardware_vib=0.0):
         """
-        Evaluates the direct CNN output probability.
+        Evaluates system health based on AI score, temperature, and vibration.
         """
         status = "HEALTHY"
-        if cnn_fused_score > 0.78:   # Critical - triggers Kill Switch
+        
+        # Rule 1: AI Score Over Critical
+        if cnn_fused_score > 0.78:
             status = "CRITICAL"
+        # Rule 2: Overheat (User requested 35C critical)
+        elif current_temp >= 35.0:
+            status = "CRITICAL"
+        # Rule 3: Extreme Vibration (User requested high threshold: +100 above baseline)
+        elif hardware_vib >= 337.0:
+            status = "CRITICAL"
+        # Rule 4: Warnings (+50 above baseline)
+        elif cnn_fused_score > 0.60 or current_temp >= 32.0 or hardware_vib >= 287.0:
+            status = "WARNING"
+            
+        if status == "CRITICAL":
             if not self.critical_triggered:
                 self.send_kill_command()
-                self.send_whatsapp_alert()
+                self.send_whatsapp_alert(cnn_fused_score, current_temp, hardware_vib)
                 self.critical_triggered = True
-        elif cnn_fused_score > 0.60:  # Warning
-            status = "WARNING"
+        elif status == "HEALTHY":
+            # Reset critical trigger if system recovers (manual reset might be safer for demos)
+            # self.critical_triggered = False 
+            pass
             
         # Log all readings to CSV with timestamp
         with open(self.log_file, 'a', newline='') as f:
@@ -71,21 +88,38 @@ class FusionEngine:
         except Exception as e:
             print(f"Failed to send KILL command to Pi: {e}")
 
-    def send_whatsapp_alert(self):
-        """Sends a WhatsApp alert via Twilio."""
+    def send_whatsapp_alert(self, score, temp, vib):
+        """Sends a detailed WhatsApp alert via Twilio with throttling."""
         if not self.twilio_client or not self.twilio_to:
-            print("WhatsApp Alert Skipped (Twilio credentials not set in environment).")
+            print("WhatsApp Alert Skipped (Twilio credentials not set).")
+            return
+            
+        # Throttle alerts to avoid spamming
+        now = time.time()
+        if now - self.last_alert_time < self.alert_cooldown:
+            print(f"WhatsApp alert throttled (Next alert available in {int(self.alert_cooldown - (now - self.last_alert_time))}s)")
             return
             
         try:
-            # Twilio requires the 'whatsapp:' prefix
             to_number = self.twilio_to if self.twilio_to.startswith('whatsapp:') else f"whatsapp:{self.twilio_to}"
+            
+            # Construct a rich diagnostic message
+            body = (
+                f"🚨 *AURA EMERGENCY SYSTEM* 🚨\n\n"
+                f"Critical motor fault detected! Emergency shutdown initiated.\n\n"
+                f"*DIAGNOSTICS:*\n"
+                f"• AI Fault Score: {score:.2f}\n"
+                f"• Temperature: {temp:.1f}°C\n"
+                f"• Vibration Index: {vib:.1f}\n\n"
+                f"Please inspect the hardware immediately. v2.4.1"
+            )
             
             message = self.twilio_client.messages.create(
                 from_=self.twilio_from,
-                body="🚨 *AURA CRITICAL ALERT* 🚨\nMotor fault detected! Emergency shutdown sequence initiated. Please inspect the unit immediately.",
+                body=body,
                 to=to_number
             )
-            print(f"WhatsApp Alert Sent Successfully! (SID: {message.sid})")
+            self.last_alert_time = now
+            print(f"WhatsApp Alert Sent! (SID: {message.sid})")
         except Exception as e:
             print(f"Failed to send WhatsApp alert: {e}")
